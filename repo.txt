@@ -1,0 +1,159 @@
+CR-BL = sp
+
+SSP5 = gs
+
+train all = 16465 (14340, 2124)
+
+train sp = 11782 (10082, 1699)
+
+train gs - 4683 (4258, 425)
+
+test all = 4118 (3586, 531)
+
+test sp = 2942 (2528, 413)
+
+test gs = 1177 (1058, 118)
+
+- origin
+    - swin
+        
+        
+        | accuracy | 0.9087 |
+        | precision | 0.8298 |
+        | recall | 0.3672 |
+        | f1 | 0.5091 |
+        
+        | actual\predict | good | fail |
+        | good | 3546 | 40 |
+        | fail | 336 | 195 |
+    - cnn
+        
+        
+        | accuracy | 0.8902 |
+        | precision | 0.5549 |
+        | recall | 0.7514 |
+        | f1 | 0.6384 |
+        
+        | actual\predict | good | fail |
+        | good | 3266 | 320 |
+        | fail | 132 | 399 |
+
+- CR-BL, SSP5 나눠서 학습
+    - swin
+        - CR-BL
+            
+            
+            | accuracy | 0.9021 |
+            | precision | 0.6923 |
+            | recall | 0.5448 |
+            | f1 | 0.6098 |
+            
+            | actual\predict | good | fail |
+            | good | 2432 | 96 |
+            | fail | 188 | 225 |
+        - SSP5
+            
+            
+            | accuracy | 0.9439 |
+            | precision | 0.9062 |
+            | recall | 0.4915 |
+            | f1 | 0.6374 |
+            
+            | actual\predict | good | fail |
+            | good | 1052 | 6 |
+            | fail | 58 | 60 |
+    - cnn
+        - CR-BL
+            
+            
+            | accuracy | 0.8596 |
+            | precision | 0 |
+            | recall | 0 |
+            | f1 | 0 |
+            
+            | actual\predict | good | fail |
+            | good | 2528 | 0 |
+            | fail | 413 | 0 |
+        - SSP5
+            
+            
+            | accuracy | 0.9490 |
+            | precision | 0.8152 |
+            | recall | 0.6356 |
+            | f1 | 0.7143 |
+            
+            | actual\predict | good | fail |
+            | good | 1041 | 17 |
+            | fail | 43 | 75 |
+    
+
+- CR-BL, SSP5 나눠서 증강 학습
+    
+    
+    datagen = ImageDataGenerator(
+    
+    zoom_rage = 0.2, 
+    
+    width_shift_rage = 0.2,
+    
+    height_shift_rage = 0.2,
+    
+    horizontal_flip = True,
+    
+    vertical_flip = True,
+    
+    fill_mode = “reflect"
+    
+    )
+    
+    SMOTE(random_state = 42 , k_neighbors = 1, sampling_strategy = 0.75)
+    
+    - swin
+        - CR-BL
+            
+            
+            | accuracy | 0.8630 |
+            | precision | 0.5088 |
+            | recall | 0.6973 |
+            | f1 | 0.5884 |
+            
+            | actual\predict | good | fail |
+            | good | 2249 | 279 |
+            | fail | 126 | 287 |
+        - SSP5
+            
+            
+            | accuracy | 0.9337 |
+            | precision | 0.6471 |
+            | recall | 0.7458 |
+            | f1 | 0.6930 |
+            
+            | actual\predict | good | fail |
+            | good | 1009 | 49 |
+            | fail | 30 | 88 |
+    - cnn
+        
+        메모리 부족으로 다른 환경은 유지한 채 image를 rgb_to_gray로 128, 128, 1 로 모델을 바꿨음 
+        
+        - CR-BL
+            
+            
+            | accuracy | 0.8824 |
+            | precision | 0.5597 |
+            | recall | 0.7603 |
+            | f1 | 0.6448 |
+            
+            | actual\predict | good | fail |
+            | good | 2281 | 247 |
+            | fail | 99 | 314 |
+        - SSP5
+            
+            
+            | accuracy | 0.8997 |
+            | precision | 0 |
+            | recall | 0 |
+            | f1 | 0 |
+            
+            | actual\predict | good | fail |
+            | good | 1058 | 0 |
+            | fail | 0 | 0 |
