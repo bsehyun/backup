@@ -16,3 +16,21 @@ class BinaryFocalLoss(tf.keras.losses.Loss):
         focal_loss = self.alpha * focal_weight * bce
 
         return tf.reduce_mean(focal_loss)
+
+
+class CategoricalFocalLoss(tf.keras.losses.Loss):
+    def __init__(self, alpha=0.25, gamma=2.0):
+        super(CategoricalFocalLoss, self).__init__()
+        self.alpha = alpha
+        self.gamma = gamma
+
+    def call(self, y_true, y_pred):
+        # CrossEntropy 손실 계산
+        cross_entropy = tf.keras.losses.categorical_crossentropy(y_true, y_pred)
+        
+        # p_t 값 계산: y_true와 y_pred에 따른 확률
+        p_t = y_true * y_pred + (1 - y_true) * (1 - y_pred)
+        
+        # Focal Loss 계산
+        focal_loss = self.alpha * tf.pow(1 - p_t, self.gamma) * cross_entropy
+        return tf.reduce_mean(focal_loss)
