@@ -286,3 +286,288 @@ def get_model():
     )
     
     return model
+
+
+
+
+
+
+# =======================================
+
+def outer_product(inputs):
+    # Unpack the inputs
+    x1, x2 = inputs
+    
+    # Get shapes
+    batch_size = tf.shape(x1)[0]
+    height = tf.shape(x1)[1]
+    width = tf.shape(x1)[2]
+    depth1 = x1.shape[3]
+    depth2 = x2.shape[3]
+    
+    # Reshape tensors to 2D
+    x1_flat = tf.reshape(x1, [batch_size * height * width, depth1])
+    x2_flat = tf.reshape(x2, [batch_size * height * width, depth2])
+    
+    # 그룹 컨볼루션 효과를 위해 채널을 그룹으로 분할
+    groups = 8  # 그룹 수 지정
+    depth1_per_group = depth1 // groups
+    depth2_per_group = depth2 // groups
+    
+    # 결과를 저장할 텐서
+    phi_I_groups = []
+    
+    # 각 그룹별로 계산
+    for g in range(groups):
+        # 그룹별 채널 슬라이싱
+        x1_group = x1_flat[:, g*depth1_per_group:(g+1)*depth1_per_group]
+        x2_group = x2_flat[:, g*depth2_per_group:(g+1)*depth2_per_group]
+        
+        # 3D 텐서로 재구성
+        x1_3d = tf.reshape(x1_group, [batch_size, height * width, depth1_per_group])
+        x2_3d = tf.reshape(x2_group, [batch_size, height * width, depth2_per_group])
+        
+        # 그룹별 외적 계산
+        phi_I_group = tf.matmul(tf.transpose(x1_3d, [0, 2, 1]), x2_3d)
+        phi_I_group = tf.reshape(phi_I_group, [batch_size, depth1_per_group * depth2_per_group])
+        
+        # 드롭아웃 적용 - 과적합 방지
+        phi_I_group = tf.keras.layers.Dropout(0.2)(phi_I_group, training=True)
+        
+        phi_I_groups.append(phi_I_group)
+    
+    # 그룹 결과 결합
+    phi_I = tf.concat(phi_I_groups, axis=1)
+    
+    # 특성 맵 크기로 정규화
+    phi_I = phi_I / tf.cast(height * width, tf.float32)
+    
+    # 부호 있는 제곱근
+    y_ssqrt = tf.sign(phi_I) * tf.sqrt(tf.abs(phi_I) + 1e-12)
+    
+    # L2 정규화
+    z_l2 = tf.nn.l2_normalize(y_ssqrt, axis=1)
+    
+    return z_l2
+
+# 사용자 정의 정규화 레이어
+class MixedNormalization(tf.keras.layers.Layer):
+    def __init__(self, epsilon=1e-5, momentum=0.99, **kwargs):
+        super(MixedNormalization, self).__init__(**kwargs)
+        self.epsilon = epsilon
+        self.momentum = momentum
+        
+    def build(self, input_shape):
+        dim = input_shape[-1]
+        self.gamma = self.add_weight(
+            name='gamma',
+            shape=(dim,),
+            initializer='ones',
+            trainable=True
+        )
+        self.beta = self.add_weight(
+            name='beta',
+            shape=(dim,),
+            initializer='zeros',
+            trainable=True
+        )
+        # 배치 정규화를 위한 이동 평균/분산
+        self.moving_mean = self.add_weight(
+            name='moving_mean',
+            shape=(dim,),
+            initializer='zeros',
+            trainable=False
+        )
+        self.moving_var = self.add_weight(
+            name='moving_var',
+            shape=(dim,),
+            initializer='ones',
+            trainable=False
+        )
+        super(MixedNormalization, self).build(input_shape)
+
+    def call(self, inputs, training=None):
+        if training:
+            # 훈련 중에는 입력과 이동 평균을 혼합하여 사용
+            batch_mean, batch_var = tf.nn.moments(inputs, axes=[0, 1, 2])
+            
+            # 이동 평균/분산 업데이트
+            self.moving_mean.assign_sub(
+                (1 - self.momentum) * (self.moving_mean - batch_mean)
+            )
+            self.moving_var.assign_sub(
+                (1 - self.momentum) * (self.moving_var - batch_var)
+            )
+            
+            # 배치 통계와 이동 평균의 혼합
+            mean = 0.5 * batch_mean + 0.5 * self.moving_mean
+            var = 0.5 * batch_var + 0.5 * self.moving_var
+        else:
+            # 추론 중에는 이동 평균/분산 사용
+            mean = self.moving_mean
+            var = self.moving_var
+            
+        normalized = (inputs - mean) / tf.sqrt(var + self.epsilon)
+        return self.gamma * normalized + self.beta
+
+# 특성 재보정 레이어 (Feature Recalibration)
+class FeatureRecalibration(tf.keras.layers.Layer):
+    def __init__(self, reduction_ratio=16, **kwargs):
+        super(FeatureRecalibration, self).__init__(**kwargs)
+        self.reduction_ratio = reduction_ratio
+        
+    def build(self, input_shape):
+        channels = input_shape[-1]
+        self.reduced_channels = max(channels // self.reduction_ratio, 1)
+        
+        self.squeeze = tf.keras.layers.GlobalAveragePooling2D()
+        self.fc1 = tf.keras.layers.Dense(self.reduced_channels, activation='relu')
+        self.fc2 = tf.keras.layers.Dense(channels, activation='sigmoid')
+        
+        super(FeatureRecalibration, self).build(input_shape)
+        
+    def call(self, inputs):
+        # 채널별 중요도 계산
+        x = self.squeeze(inputs)
+        x = self.fc1(x)
+        x = self.fc2(x)
+        
+        # 채널별 가중치 적용
+        x = tf.reshape(x, [-1, 1, 1, inputs.shape[-1]])
+        return inputs * x
+
+def get_model():
+    # 해상도를 절반으로 축소하되 과적합 방지를 위해 약간 더 높게 유지
+    IMG_SIZE_h = 128  # 224에서 약간만 축소 (112보다 높게)
+    IMG_SIZE_w = 128
+    channel = 3
+    
+    input_tensor = Input(shape=(IMG_SIZE_h, IMG_SIZE_w, channel))
+    
+    # 데이터 증강 레이어 추가 (과적합 방지)
+    aug_input = tf.keras.layers.RandomFlip("horizontal")(input_tensor)
+    aug_input = tf.keras.layers.RandomRotation(0.1)(aug_input)
+    aug_input = tf.keras.layers.RandomZoom(0.1)(aug_input)
+    aug_input = tf.keras.layers.RandomContrast(0.1)(aug_input)
+    
+    # EfficientNet 백본 - 과적합 방지를 위한 설정
+    base_model1 = efn.EfficientNetB0(
+        weights='imagenet', 
+        include_top=False,
+        input_shape=(IMG_SIZE_h, IMG_SIZE_w, channel)
+    )
+    base_model2 = efn.EfficientNetB0(
+        weights='noisy-student', 
+        include_top=False,
+        input_shape=(IMG_SIZE_h, IMG_SIZE_w, channel)
+    )
+    
+    # 과적합 방지를 위해 일부 레이어 동결
+    for layer in base_model1.layers[:-20]:  # 마지막 20개 레이어만 훈련
+        layer.trainable = False
+    for layer in base_model2.layers[:-20]:  # 마지막 20개 레이어만 훈련
+        layer.trainable = False
+    
+    # 이름 충돌 방지
+    base_model1.name = "EfficientNetB0_imagenetWeight"
+    base_model2.name = "EfficientNetB0_noisy-studentWeight"
+    
+    for layer in base_model1.layers:
+        layer.name = 'model1_' + layer.name
+    for layer in base_model2.layers:
+        layer.name = 'model2_' + layer.name
+    
+    # 증강된 입력으로 특성 추출
+    d1 = base_model1(aug_input)
+    d2 = base_model2(aug_input)
+    
+    # 특성 재보정 적용 (과적합 방지 및 중요 특성 강화)
+    d1 = FeatureRecalibration()(d1)
+    d2 = FeatureRecalibration()(d2)
+    
+    # 혼합 정규화 적용
+    d1 = MixedNormalization()(d1)
+    d2 = MixedNormalization()(d2)
+    
+    # 그룹 컨볼루션 적용
+    d1 = tf.keras.layers.Conv2D(
+        filters=d1.shape[-1], 
+        kernel_size=1, 
+        groups=8,
+        kernel_regularizer=tf.keras.regularizers.l2(1e-5),  # L2 정규화 추가
+        padding='same',
+        name='group_conv_d1'
+    )(d1)
+    
+    d2 = tf.keras.layers.Conv2D(
+        filters=d2.shape[-1], 
+        kernel_size=1, 
+        groups=8,
+        kernel_regularizer=tf.keras.regularizers.l2(1e-5),  # L2 정규화 추가
+        padding='same',
+        name='group_conv_d2'
+    )(d2)
+    
+    # 드롭아웃 추가 (과적합 방지)
+    d1 = tf.keras.layers.SpatialDropout2D(0.3)(d1)
+    d2 = tf.keras.layers.SpatialDropout2D(0.3)(d2)
+    
+    # 개선된 외적 계산 적용
+    bilinear = Lambda(outer_product)([d1, d2])
+    
+    # 과적합 방지를 위한 추가 드롭아웃
+    bilinear = tf.keras.layers.Dropout(0.5)(bilinear)
+    
+    # 다중 레이어 분류기 사용 (과적합 방지 및 일반화 성능 향상)
+    x = Dense(256, activation='relu', kernel_regularizer=tf.keras.regularizers.l2(1e-4))(bilinear)
+    x = tf.keras.layers.Dropout(0.5)(x)
+    x = Dense(64, activation='relu', kernel_regularizer=tf.keras.regularizers.l2(1e-4))(x)
+    x = tf.keras.layers.Dropout(0.3)(x)
+    
+    # 최종 예측 레이어
+    predictions = Dense(
+        1, 
+        activation='sigmoid', 
+        kernel_regularizer=tf.keras.regularizers.l2(1e-4),
+        name='predictions'
+    )(x)
+    
+    # 모델 생성
+    model = Model(inputs=input_tensor, outputs=predictions)
+    
+    # 학습률 스케줄링 - 검증 손실 기반 감소
+    reduce_lr = tf.keras.callbacks.ReduceLROnPlateau(
+        monitor='val_loss',
+        factor=0.5,
+        patience=3,
+        min_lr=1e-6,
+        verbose=1
+    )
+    
+    # 조기 종료 콜백 (검증 손실 기준)
+    early_stopping = tf.keras.callbacks.EarlyStopping(
+        monitor='val_loss',
+        patience=8,
+        restore_best_weights=True,
+        verbose=1
+    )
+    
+    # 모델 체크포인트 콜백
+    model_checkpoint = tf.keras.callbacks.ModelCheckpoint(
+        'best_model.h5',
+        monitor='val_loss',
+        save_best_only=True,
+        verbose=1
+    )
+    
+    # 콜백 목록
+    callbacks = [reduce_lr, early_stopping, model_checkpoint]
+    
+    # 모델 컴파일 - 학습률 초기값 낮춤
+    model.compile(
+        optimizer=Adam(learning_rate=0.0001),  # 낮은 학습률로 시작
+        loss=binary_focal_loss_with_label_smoothing(gamma=2.0, alpha=0.75, ls=0.125),
+        metrics=['accuracy', tf.keras.metrics.AUC()]
+    )
+    
+    return model, callbacks
