@@ -1,0 +1,12 @@
+모델 단순화 (efficientent 단일 모델)
+valid set train set 라벨 비율 통일 : stratified
+배치 샘플링 1 배치 안에 0, 1 라벨 비율 유지.
+정규화 체크
+데이터 증강 (flip, 90도 회전)
+앙상블 방법 사용. (baseline, efficientnet voting, stacking 기법)
+
+
+https://github.com/nelson1425/EfficientAD
+efficientAD
+
+https://github.com/krec7748/EfficientAD/blob/main/train.py
