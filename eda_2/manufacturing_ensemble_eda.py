@@ -779,6 +779,154 @@ class ManufacturingEnsembleEDA:
         
         return use_long_term, pred_a
     
+    def generate_all_plots(self):
+        """모든 분석 플롯을 생성하고 base64로 인코딩"""
+        import io
+        import base64
+        
+        plots = {}
+        
+        # 1. Threshold 분석 플롯
+        try:
+            fig, axes = plt.subplots(2, 2, figsize=(15, 12))
+            
+            # 예측 수행
+            ensemble_pred, pred_a, pred_b = self.ensemble_predict(self.X_a, self.X_b)
+            
+            # Threshold 초과 분포
+            axes[0, 0].hist(pred_a, bins=50, alpha=0.7, label='Long Term Model Prediction', color='skyblue')
+            axes[0, 0].hist(self.y, bins=50, alpha=0.7, label='Actual Values', color='lightcoral')
+            axes[0, 0].axvline(x=self.threshold, color='red', linestyle='--', label=f'Threshold ({self.threshold})')
+            axes[0, 0].set_xlabel('Values')
+            axes[0, 0].set_ylabel('Frequency')
+            axes[0, 0].set_title('Threshold 초과 분포')
+            axes[0, 0].legend()
+            
+            # 예측 vs 실제 비교
+            axes[0, 1].scatter(self.y, pred_a, alpha=0.6, color='skyblue', label='Long Term Model')
+            axes[0, 1].scatter(self.y, pred_b, alpha=0.6, color='lightcoral', label='Short Term Model')
+            axes[0, 1].plot([self.y.min(), self.y.max()], [self.y.min(), self.y.max()], 'k--', label='Perfect Prediction')
+            axes[0, 1].axhline(y=self.threshold, color='red', linestyle='--', label=f'Threshold ({self.threshold})')
+            axes[0, 1].set_xlabel('Actual Values')
+            axes[0, 1].set_ylabel('Predicted Values')
+            axes[0, 1].set_title('예측 vs 실제 비교')
+            axes[0, 1].legend()
+            
+            # Threshold 초과 감지 정확도
+            threshold_exceeded = pred_a > self.threshold
+            actual_exceeded = self.y > self.threshold
+            confusion_matrix = np.array([[np.sum(~threshold_exceeded & ~actual_exceeded), np.sum(threshold_exceeded & ~actual_exceeded)],
+                                       [np.sum(~threshold_exceeded & actual_exceeded), np.sum(threshold_exceeded & actual_exceeded)]])
+            sns.heatmap(confusion_matrix, annot=True, fmt='d', cmap='Blues', 
+                       xticklabels=['Below Threshold', 'Above Threshold'],
+                       yticklabels=['Below Threshold', 'Above Threshold'], ax=axes[1, 0])
+            axes[1, 0].set_title('Threshold 초과 감지 Confusion Matrix')
+            
+            # 모델 선택 분포
+            long_term_selected = np.sum(pred_a > self.threshold)
+            short_term_selected = len(self.y) - long_term_selected
+            
+            axes[1, 1].pie([long_term_selected, short_term_selected], 
+                           labels=['Long Term Model', 'Short Term Model'],
+                           autopct='%1.1f%%', colors=['skyblue', 'lightcoral'])
+            axes[1, 1].set_title('모델 선택 분포')
+            
+            plt.tight_layout()
+            
+            # base64로 인코딩
+            img_buffer = io.BytesIO()
+            fig.savefig(img_buffer, format='png', dpi=300, bbox_inches='tight')
+            img_buffer.seek(0)
+            img_str = base64.b64encode(img_buffer.getvalue()).decode()
+            plt.close(fig)
+            
+            plots['Threshold Analysis'] = img_str
+        except Exception as e:
+            print(f"Threshold 분석 플롯 생성 실패: {e}")
+        
+        # 2. Feature Importance 플롯
+        try:
+            importance_df_a, importance_df_b = self.feature_importance_analysis()
+            
+            fig, axes = plt.subplots(1, 2, figsize=(20, 8))
+            
+            # Long Term Model Feature Importance
+            top_features_a = importance_df_a.head(10)
+            axes[0].barh(range(len(top_features_a)), top_features_a['importance'])
+            axes[0].set_yticks(range(len(top_features_a)))
+            axes[0].set_yticklabels(top_features_a.index, fontsize=10)
+            axes[0].set_xlabel('Importance')
+            axes[0].set_title('Long Term Model - Top 10 Feature Importance')
+            
+            # Short Term Model Feature Importance
+            top_features_b = importance_df_b.head(10)
+            axes[1].barh(range(len(top_features_b)), top_features_b['importance'])
+            axes[1].set_yticks(range(len(top_features_b)))
+            axes[1].set_yticklabels(top_features_b.index, fontsize=10)
+            axes[1].set_xlabel('Importance')
+            axes[1].set_title('Short Term Model - Top 10 Feature Importance')
+            
+            plt.tight_layout()
+            
+            # base64로 인코딩
+            img_buffer = io.BytesIO()
+            fig.savefig(img_buffer, format='png', dpi=300, bbox_inches='tight')
+            img_buffer.seek(0)
+            img_str = base64.b64encode(img_buffer.getvalue()).decode()
+            plt.close(fig)
+            
+            plots['Feature Importance'] = img_str
+        except Exception as e:
+            print(f"Feature Importance 플롯 생성 실패: {e}")
+        
+        # 3. 모델 성능 비교 플롯
+        try:
+            metrics, ensemble_pred, pred_a, pred_b = self.model_performance_comparison()
+            
+            fig, axes = plt.subplots(2, 2, figsize=(15, 12))
+            
+            # MSE 비교
+            model_names = ['Long Term', 'Short Term', 'Ensemble']
+            mse_values = [metrics['Long Term']['MSE'], metrics['Short Term']['MSE'], metrics['Ensemble']['MSE']]
+            axes[0, 0].bar(model_names, mse_values, color=['skyblue', 'lightcoral', 'lightgreen'])
+            axes[0, 0].set_ylabel('MSE')
+            axes[0, 0].set_title('Mean Squared Error 비교')
+            
+            # R² 비교
+            r2_values = [metrics['Long Term']['R2'], metrics['Short Term']['R2'], metrics['Ensemble']['R2']]
+            axes[0, 1].bar(model_names, r2_values, color=['skyblue', 'lightcoral', 'lightgreen'])
+            axes[0, 1].set_ylabel('R²')
+            axes[0, 1].set_title('R² Score 비교')
+            
+            # 예측 vs 실제 (Long Term)
+            axes[1, 0].scatter(self.y, pred_a, alpha=0.6, color='skyblue')
+            axes[1, 0].plot([self.y.min(), self.y.max()], [self.y.min(), self.y.max()], 'k--')
+            axes[1, 0].set_xlabel('Actual')
+            axes[1, 0].set_ylabel('Predicted')
+            axes[1, 0].set_title('Long Term Model: Predicted vs Actual')
+            
+            # 예측 vs 실제 (Short Term)
+            axes[1, 1].scatter(self.y, pred_b, alpha=0.6, color='lightcoral')
+            axes[1, 1].plot([self.y.min(), self.y.max()], [self.y.min(), self.y.max()], 'k--')
+            axes[1, 1].set_xlabel('Actual')
+            axes[1, 1].set_ylabel('Predicted')
+            axes[1, 1].set_title('Short Term Model: Predicted vs Actual')
+            
+            plt.tight_layout()
+            
+            # base64로 인코딩
+            img_buffer = io.BytesIO()
+            fig.savefig(img_buffer, format='png', dpi=300, bbox_inches='tight')
+            img_buffer.seek(0)
+            img_str = base64.b64encode(img_buffer.getvalue()).decode()
+            plt.close(fig)
+            
+            plots['Model Performance Comparison'] = img_str
+        except Exception as e:
+            print(f"모델 성능 비교 플롯 생성 실패: {e}")
+        
+        return plots
+    
     def comprehensive_analysis(self, generate_html_report=True):
         """종합 분석 실행"""
         print("=== 제조 산업 센서 데이터 Ensemble 모델 EDA ===\n")
@@ -804,6 +952,9 @@ class ManufacturingEnsembleEDA:
         # 7. Ensemble 결정 분석
         use_long_term, pred_a = self.ensemble_decision_analysis()
         
+        # 8. 플롯 생성 및 저장
+        plots = self.generate_all_plots()
+        
         # 종합 결론
         print("\n=== 종합 결론 ===")
         print("1. 주요 발견사항:")
@@ -819,23 +970,42 @@ class ManufacturingEnsembleEDA:
         if self.basic_tags:
             print(f"   - 분석된 Basic tags: {', '.join(self.basic_tags[:5])}")
         
-        # 결과 딕셔너리 생성
+        # 결과 딕셔너리 생성 (HTML 리포트 호환성을 위해 키 재구성)
         results = {
             'threshold_analysis': threshold_results,
-            'basic_transformations_a': basic_transformations_a,
-            'basic_transformations_b': basic_transformations_b,
-            'correlation_matrix_a': correlation_matrix_a,
-            'correlation_matrix_b': correlation_matrix_b,
-            'target_correlation_a': target_corr_a,
-            'target_correlation_b': target_corr_b,
-            'importance_df_a': importance_df_a,
-            'importance_df_b': importance_df_b,
             'model_performance': metrics,
+            'feature_importance': {
+                'long_term_top_features': importance_df_a.head(10).to_dict('index'),
+                'short_term_top_features': importance_df_b.head(10).to_dict('index'),
+                'long_term_importance_df': importance_df_a,
+                'short_term_importance_df': importance_df_b
+            },
+            'correlation_analysis': {
+                'long_term_correlation_matrix': correlation_matrix_a,
+                'short_term_correlation_matrix': correlation_matrix_b,
+                'long_term_target_corr': target_corr_a,
+                'short_term_target_corr': target_corr_b,
+                'long_term_max_corr': target_corr_a.iloc[0] if len(target_corr_a) > 0 else 0,
+                'short_term_max_corr': target_corr_b.iloc[0] if len(target_corr_b) > 0 else 0
+            },
+            'time_lag_analysis': {
+                'long_term_optimal_lag': target_corr_lag_a.idxmax() if len(target_corr_lag_a) > 0 else 0,
+                'short_term_optimal_lag': target_corr_lag_b.idxmax() if len(target_corr_lag_b) > 0 else 0,
+                'long_term_max_corr': target_corr_lag_a.max() if len(target_corr_lag_a) > 0 else 0,
+                'short_term_max_corr': target_corr_lag_b.max() if len(target_corr_lag_b) > 0 else 0,
+                'long_term_lag_corr': target_corr_lag_a,
+                'short_term_lag_corr': target_corr_lag_b
+            },
+            'basic_tag_analysis': {
+                'long_term_transformations': basic_transformations_a,
+                'short_term_transformations': basic_transformations_b
+            },
             'ensemble_pred': ensemble_pred,
             'use_long_term': use_long_term,
             'pred_a': pred_a,
             'y': self.y,
-            'threshold': self.threshold
+            'threshold': self.threshold,
+            'plots': plots
         }
         
         # HTML 리포트 생성
