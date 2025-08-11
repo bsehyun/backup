@@ -457,3 +457,89 @@ if __name__ == "__main__":
     print("\n예시 2: 시계열 데이터용 AdaBoost Optuna 튜닝")
     # 시계열 데이터가 있다면:
     # results_ts = run_adaboost_optuna_analysis(data=your_timeseries_data, is_timeseries=True)
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+import optuna
+from sklearn.ensemble import AdaBoostRegressor
+from sklearn.tree import DecisionTreeRegressor
+from sklearn.model_selection import cross_val_score, train_test_split
+from sklearn.datasets import fetch_california_housing
+import numpy as np
+
+# Sample data (replace with your dataset)
+X, y = fetch_california_housing(return_X_y=True)
+X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
+
+# Objective function for Optuna
+def objective(trial):
+    # Base estimator parameters
+    max_depth = trial.suggest_int("max_depth", 1, 10)
+    min_samples_split = trial.suggest_int("min_samples_split", 2, 20)
+    
+    # AdaBoost parameters
+    n_estimators = trial.suggest_int("n_estimators", 50, 500)
+    learning_rate = trial.suggest_float("learning_rate", 0.01, 2.0, log=True)
+
+    base_estimator = DecisionTreeRegressor(
+        max_depth=max_depth,
+        min_samples_split=min_samples_split,
+        random_state=42
+    )
+
+    model = AdaBoostRegressor(
+        estimator=base_estimator,
+        n_estimators=n_estimators,
+        learning_rate=learning_rate,
+        random_state=42
+    )
+
+    # 5-fold cross-validation (negative MSE -> maximize score)
+    scores = cross_val_score(model, X_train, y_train, cv=5, scoring="neg_mean_squared_error")
+    return np.mean(scores)
+
+# Run Optuna study
+study = optuna.create_study(direction="maximize")
+study.optimize(objective, n_trials=50, n_jobs=-1)
+
+# Best parameters
+print("Best Parameters:", study.best_params)
+print("Best CV Score:", study.best_value)
+
+# Train final model
+best_params = study.best_params
+final_base_estimator = DecisionTreeRegressor(
+    max_depth=best_params["max_depth"],
+    min_samples_split=best_params["min_samples_split"],
+    random_state=42
+)
+final_model = AdaBoostRegressor(
+    estimator=final_base_estimator,
+    n_estimators=best_params["n_estimators"],
+    learning_rate=best_params["learning_rate"],
+    random_state=42
+)
+final_model.fit(X_train, y_train)
+print("Test R^2:", final_model.score(X_test, y_test))
+
