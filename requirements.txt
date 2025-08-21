@@ -1,8 +1,20 @@
-python == "3.7.0"
-tensorflow == "2.6.0"
-cuda == "10.0"
-tensorflow-gpu == "2.6.0"
-scikit-learn == "1.0.2"
-icu == "68.1"
-ipykernel == "6.15.2"
-keras == "2.6.0"
+opencv-python==4.8.1.78
+pytesseract==0.3.10
+Pillow==10.0.1
+numpy==1.24.3
+transformers==4.35.0
+torch==2.1.0
+torchvision==0.16.0
+sentencepiece==0.1.99
+protobuf==4.24.4
+RPi.GPIO==0.7.1
+picamera2==0.3.12
+lcd1602==0.1.0
+
+# 시계열 EDA 도구를 위한 추가 패키지들
+pandas>=1.5.0
+matplotlib>=3.6.0
+seaborn>=0.12.0
+scikit-learn>=1.2.0
+scipy>=1.10.0
+umap-learn>=0.5.3
