@@ -1,0 +1,30 @@
+# PyTorch with ROCm support for AMD GPU
+# Install PyTorch with ROCm support
+# For ROCm 5.4.2 (recommended for most AMD GPUs)
+torch>=2.0.0
+torchvision>=0.15.0
+torchaudio>=2.0.0
+
+# Alternative: For ROCm 5.6 (newer AMD GPUs)
+# torch>=2.1.0
+# torchvision>=0.16.0
+# torchaudio>=2.1.0
+
+# Core dependencies
+numpy>=1.21.0
+pandas>=1.3.0
+matplotlib>=3.5.0
+opencv-python>=4.5.0
+Pillow>=8.3.0
+scikit-learn>=1.0.0
+
+# Data loading and processing
+tqdm>=4.62.0
+
+# Optional: For better performance
+# accelerate>=0.20.0  # For mixed precision training
+# tensorboard>=2.8.0  # For training visualization
+
+# Development dependencies (optional)
+# jupyter>=1.0.0
+# ipykernel>=6.0.0
