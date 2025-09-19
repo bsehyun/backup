@@ -13,7 +13,7 @@ except ImportError:
     DIRECTML_AVAILABLE = False
 
 class BilinearPooling(nn.Module):
-    """Bilinear pooling layer for combining two feature maps"""
+    """Simplified bilinear pooling layer for combining two feature maps"""
     def __init__(self):
         super(BilinearPooling, self).__init__()
         
@@ -21,17 +21,28 @@ class BilinearPooling(nn.Module):
         batch_size, height, width, depth1 = x1.size()
         _, _, _, depth2 = x2.size()
         
-        # Reshape to [batch_size, height*width, depth]
-        x1_flat = x1.view(batch_size, height*width, depth1)
-        x2_flat = x2.view(batch_size, height*width, depth2)
+        # Ensure both feature maps have the same spatial dimensions
+        if x1.shape[1:3] != x2.shape[1:3]:
+            raise ValueError(f"Spatial dimensions mismatch: {x1.shape[1:3]} vs {x2.shape[1:3]}")
         
-        # Compute bilinear pooling
-        phi_I = torch.bmm(x1_flat.transpose(1, 2), x2_flat)  # [batch_size, depth1, depth2]
-        phi_I = phi_I.view(batch_size, depth1*depth2)
-        phi_I = phi_I / (height * width)
+        # Global average pooling for each feature map
+        x1_pooled = F.adaptive_avg_pool2d(x1.permute(0, 3, 1, 2), (1, 1))  # [batch, depth1, 1, 1]
+        x2_pooled = F.adaptive_avg_pool2d(x2.permute(0, 3, 1, 2), (1, 1))  # [batch, depth2, 1, 1]
+        
+        x1_pooled = x1_pooled.view(batch_size, depth1)  # [batch, depth1]
+        x2_pooled = x2_pooled.view(batch_size, depth2)  # [batch, depth2]
+        
+        # Element-wise multiplication and concatenation
+        # This is a simplified version of bilinear pooling
+        x1_expanded = x1_pooled.unsqueeze(2)  # [batch, depth1, 1]
+        x2_expanded = x2_pooled.unsqueeze(1)  # [batch, 1, depth2]
+        
+        # Outer product: [batch, depth1, 1] * [batch, 1, depth2] = [batch, depth1, depth2]
+        bilinear = x1_expanded * x2_expanded
+        bilinear = bilinear.view(batch_size, depth1 * depth2)  # [batch, depth1*depth2]
         
         # Signed square root normalization
-        y_sqrt = torch.sign(phi_I) * torch.sqrt(torch.abs(phi_I) + 1e-12)
+        y_sqrt = torch.sign(bilinear) * torch.sqrt(torch.abs(bilinear) + 1e-12)
         z_12 = F.normalize(y_sqrt, p=2, dim=1)
         
         return z_12
@@ -93,14 +104,15 @@ class CRBLDualModel(nn.Module):
         # Bilinear pooling
         self.bilinear_pooling = BilinearPooling()
         
-        # Classifier
+        # Classifier - will be initialized after first forward pass
         self.dropout = nn.Dropout(0.5)
-        self.classifier = nn.Linear(1280 * 1280, num_classes)  # EfficientNetB0 output is 1280
+        self.classifier = None
+        self._classifier_initialized = False
         
     def forward(self, x):
         # Extract features from both models
-        features1 = self.feature_extractor1(x)  # [batch, 1280, 4, 4] for 128x128 input
-        features2 = self.feature_extractor2(x)  # [batch, 1280, 4, 4] for 128x128 input
+        features1 = self.feature_extractor1(x)
+        features2 = self.feature_extractor2(x)
         
         # Transpose to match TensorFlow format [batch, height, width, channels]
         features1 = features1.permute(0, 2, 3, 1)
@@ -108,6 +120,12 @@ class CRBLDualModel(nn.Module):
         
         # Apply bilinear pooling
         bilinear_features = self.bilinear_pooling(features1, features2)
+        
+        # Initialize classifier if not done yet
+        if not self._classifier_initialized:
+            feature_dim = bilinear_features.shape[1]
+            self.classifier = nn.Linear(feature_dim, self.num_classes).to(bilinear_features.device)
+            self._classifier_initialized = True
         
         # Classification
         x = self.dropout(bilinear_features)
