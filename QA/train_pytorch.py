@@ -195,7 +195,19 @@ def train_model(isCrop=True, epochs=30, batch_size=32, learning_rate=0.0001,
     
     # Create model
     print("Creating model...")
-    model = CRBLModel(input_size=128, isCrop=isCrop)
+    
+    # Check for Noisy-Student weights
+    noisy_student_weights_path = "./pretrained_weights/efficientnet-b0_noisy-student.pth"
+    if not os.path.exists(noisy_student_weights_path):
+        print("Noisy-Student weights not found. Downloading...")
+        try:
+            from download_noisy_student import main as download_noisy_student
+            noisy_student_weights_path = download_noisy_student()
+        except Exception as e:
+            print(f"Warning: Could not download Noisy-Student weights: {e}")
+            noisy_student_weights_path = None
+    
+    model = CRBLModel(input_size=128, isCrop=isCrop, noisy_student_weights_path=noisy_student_weights_path)
     model = model.to(device)
     
     print(f"Model trainable parameters: {count_parameters(model):,}")

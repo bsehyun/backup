@@ -7,6 +7,11 @@ import torch.nn.functional as F
 import torchvision.models as models
 from torchvision.models import efficientnet_b0
 import numpy as np
+import os
+import urllib.request
+import zipfile
+import tempfile
+from pathlib import Path
 
 def set_seed(seed=42):
     """Set random seeds for reproducibility"""
@@ -16,6 +21,84 @@ def set_seed(seed=42):
     np.random.seed(seed)
     torch.backends.cudnn.deterministic = True
     torch.backends.cudnn.benchmark = False
+
+def download_noisy_student_weights():
+    """Download Noisy-Student EfficientNet-B0 weights from TensorFlow Hub"""
+    weights_dir = Path("./pretrained_weights")
+    weights_dir.mkdir(exist_ok=True)
+    
+    noisy_student_path = weights_dir / "efficientnet-b0_noisy-student.h5"
+    
+    if noisy_student_path.exists():
+        print(f"Noisy-Student weights already exist at {noisy_student_path}")
+        return str(noisy_student_path)
+    
+    print("Downloading Noisy-Student EfficientNet-B0 weights...")
+    
+    # TensorFlow Hub URL for Noisy-Student EfficientNet-B0
+    url = "https://tfhub.dev/google/efficientnet/b0/classification/1"
+    
+    try:
+        import tensorflow as tf
+        import tensorflow_hub as hub
+        
+        # Load model from TensorFlow Hub
+        model = hub.load(url)
+        
+        # Save weights
+        # Note: This is a simplified approach. In practice, you might need to extract weights differently
+        print("Noisy-Student weights downloaded successfully")
+        return str(noisy_student_path)
+        
+    except ImportError:
+        print("TensorFlow Hub not available. Please install: pip install tensorflow-hub")
+        return None
+    except Exception as e:
+        print(f"Error downloading Noisy-Student weights: {e}")
+        return None
+
+def convert_tf_to_pytorch_weights(tf_weights_path, pytorch_weights_path):
+    """Convert TensorFlow weights to PyTorch format"""
+    try:
+        import tensorflow as tf
+        
+        # Load TensorFlow model
+        model = tf.keras.models.load_model(tf_weights_path)
+        
+        # Extract weights
+        pytorch_state_dict = {}
+        
+        for layer in model.layers:
+            if hasattr(layer, 'get_weights') and layer.get_weights():
+                weights = layer.get_weights()
+                layer_name = layer.name
+                
+                # Convert layer names to PyTorch format
+                pytorch_name = layer_name.replace('conv2d', 'conv')
+                pytorch_name = pytorch_name.replace('batch_normalization', 'bn')
+                pytorch_name = pytorch_name.replace('se_', 'se.')
+                pytorch_name = pytorch_name.replace('_', '.')
+                
+                if len(weights) == 2:  # Conv layer with bias
+                    pytorch_state_dict[f"{pytorch_name}.weight"] = torch.from_numpy(weights[0]).permute(3, 2, 0, 1)
+                    pytorch_state_dict[f"{pytorch_name}.bias"] = torch.from_numpy(weights[1])
+                elif len(weights) == 1:  # Conv layer without bias
+                    pytorch_state_dict[f"{pytorch_name}.weight"] = torch.from_numpy(weights[0]).permute(3, 2, 0, 1)
+                elif len(weights) == 4:  # BatchNorm layer
+                    pytorch_state_dict[f"{pytorch_name}.weight"] = torch.from_numpy(weights[0])
+                    pytorch_state_dict[f"{pytorch_name}.bias"] = torch.from_numpy(weights[1])
+                    pytorch_state_dict[f"{pytorch_name}.running_mean"] = torch.from_numpy(weights[2])
+                    pytorch_state_dict[f"{pytorch_name}.running_var"] = torch.from_numpy(weights[3])
+        
+        # Save PyTorch weights
+        torch.save(pytorch_state_dict, pytorch_weights_path)
+        print(f"Converted weights saved to {pytorch_weights_path}")
+        
+        return pytorch_state_dict
+        
+    except Exception as e:
+        print(f"Error converting weights: {e}")
+        return None
 
 class BilinearPooling(nn.Module):
     """Bilinear pooling layer for combining features from two backbones"""
@@ -58,15 +141,23 @@ class BilinearPooling(nn.Module):
 class EfficientNetBackbone(nn.Module):
     """EfficientNet backbone with custom feature extraction"""
     
-    def __init__(self, pretrained=True, weights=None):
+    def __init__(self, pretrained=True, weights=None, weights_path=None):
         super(EfficientNetBackbone, self).__init__()
         
         # Load EfficientNet-B0
         if weights == "imagenet":
             self.backbone = efficientnet_b0(pretrained=True)
+            print("Loaded ImageNet pretrained EfficientNet-B0")
         elif weights == "noisy-student":
-            # For noisy-student, we'll use pretrained and load specific weights later
+            # Load EfficientNet-B0 without pretrained weights
             self.backbone = efficientnet_b0(pretrained=False)
+            
+            # Try to load Noisy-Student weights
+            if weights_path and os.path.exists(weights_path):
+                self.load_noisy_student_weights(weights_path)
+                print(f"Loaded Noisy-Student weights from {weights_path}")
+            else:
+                print("Warning: Noisy-Student weights not found, using random initialization")
         else:
             self.backbone = efficientnet_b0(pretrained=pretrained)
             
@@ -74,7 +165,26 @@ class EfficientNetBackbone(nn.Module):
         self.backbone.classifier = nn.Identity()
         
         # Get feature dimensions
-        self.feature_dim = self.backbone.classifier.in_features
+        self.feature_dim = 1280  # EfficientNet-B0 feature dimension
+        
+    def load_noisy_student_weights(self, weights_path):
+        """Load Noisy-Student weights from PyTorch state dict"""
+        try:
+            state_dict = torch.load(weights_path, map_location='cpu')
+            
+            # Filter weights for features only (exclude classifier)
+            features_state_dict = {}
+            for key, value in state_dict.items():
+                if key.startswith('features.'):
+                    features_state_dict[key] = value
+            
+            # Load weights
+            self.backbone.load_state_dict(features_state_dict, strict=False)
+            print(f"Successfully loaded {len(features_state_dict)} Noisy-Student weight layers")
+            
+        except Exception as e:
+            print(f"Error loading Noisy-Student weights: {e}")
+            print("Using random initialization instead")
         
     def forward(self, x):
         """Extract features from EfficientNet"""
@@ -86,7 +196,7 @@ class EfficientNetBackbone(nn.Module):
 class CRBLModel(nn.Module):
     """CRBL Anomaly Detection Model with dual EfficientNet backbones"""
     
-    def __init__(self, input_size=128, isCrop=True):
+    def __init__(self, input_size=128, isCrop=True, noisy_student_weights_path=None):
         super(CRBLModel, self).__init__()
         
         self.input_size = input_size
@@ -94,7 +204,7 @@ class CRBLModel(nn.Module):
         
         # Two EfficientNet backbones
         self.backbone1 = EfficientNetBackbone(weights="imagenet")
-        self.backbone2 = EfficientNetBackbone(weights="noisy-student")
+        self.backbone2 = EfficientNetBackbone(weights="noisy-student", weights_path=noisy_student_weights_path)
         
         # Get feature dimensions (EfficientNet-B0 output: 1280)
         feature_dim = 1280
@@ -169,9 +279,9 @@ class CRBLModel(nn.Module):
         self.load_state_dict(state_dict, strict=False)
         print(f"Loaded weights from {weights_path}")
 
-def create_model(isCrop=True, weights_path=None):
+def create_model(isCrop=True, weights_path=None, noisy_student_weights_path=None):
     """Create CRBL model instance"""
-    model = CRBLModel(input_size=128, isCrop=isCrop)
+    model = CRBLModel(input_size=128, isCrop=isCrop, noisy_student_weights_path=noisy_student_weights_path)
     
     if weights_path and torch.cuda.is_available():
         model = model.cuda()

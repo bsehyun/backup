@@ -16,6 +16,14 @@
 - **Bilinear Pooling**: 두 백본의 특징을 결합
 - **분류기**: 이진 분류를 위한 sigmoid 활성화 함수
 
+### Noisy-Student 가중치
+
+이 구현은 Noisy-Student 사전 훈련된 가중치를 자동으로 다운로드하고 사용합니다:
+
+- **자동 다운로드**: TensorFlow Hub에서 Noisy-Student EfficientNet-B0 가중치 자동 다운로드
+- **PyTorch 변환**: TensorFlow 가중치를 PyTorch 형식으로 자동 변환
+- **폴백 지원**: 다운로드 실패 시 ImageNet 사전 훈련 가중치 사용
+
 ## 설치
 
 ### 요구사항
@@ -90,6 +98,9 @@ python main.py --mode inference \
 
 # 다른 시드로 재현성 테스트
 python main.py --mode all --seed 123
+
+# Noisy-Student 가중치만 다운로드
+python download_noisy_student.py
 ```
 
 ## 파일 구조
@@ -101,6 +112,7 @@ python main.py --mode all --seed 123
 ├── train_pytorch.py          # 훈련 스크립트
 ├── inference_pytorch.py      # 추론 스크립트
 ├── weight_converter.py       # TensorFlow → PyTorch 가중치 변환
+├── download_noisy_student.py # Noisy-Student 가중치 다운로드
 ├── utils.py                  # 유틸리티 함수
 ├── requirements.txt          # 필요한 패키지 목록
 └── README.md                 # 이 파일

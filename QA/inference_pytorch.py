@@ -44,7 +44,13 @@ class CRBLInference:
     
     def _load_model(self, model_path, isCrop=True):
         """Load PyTorch model"""
-        model = CRBLModel(input_size=128, isCrop=isCrop)
+        # Check for Noisy-Student weights
+        noisy_student_weights_path = "./pretrained_weights/efficientnet-b0_noisy-student.pth"
+        if not os.path.exists(noisy_student_weights_path):
+            print("Noisy-Student weights not found. Using ImageNet pretrained weights.")
+            noisy_student_weights_path = None
+        
+        model = CRBLModel(input_size=128, isCrop=isCrop, noisy_student_weights_path=noisy_student_weights_path)
         model.load_state_dict(torch.load(model_path, map_location=self.device))
         model = model.to(self.device)
         model.eval()

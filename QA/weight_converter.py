@@ -157,6 +157,17 @@ def main():
     # Create weights directory if it doesn't exist
     os.makedirs("./weights_pytorch", exist_ok=True)
     
+    # Download and convert Noisy-Student weights first
+    print("Downloading and converting Noisy-Student weights...")
+    try:
+        from download_noisy_student import main as download_noisy_student
+        noisy_student_path = download_noisy_student()
+        if noisy_student_path:
+            print(f"Noisy-Student weights ready at: {noisy_student_path}")
+    except Exception as e:
+        print(f"Warning: Could not download Noisy-Student weights: {e}")
+        noisy_student_path = None
+    
     # Convert crop model weights
     crop_tf_path = "./weights/efficientnet_CRBL_origin_ExtraData_250401.weights.h5"
     crop_pytorch_path = "./weights_pytorch/crop_model_weights.pth"
